@@ -168,14 +168,14 @@ class SecurityConfigurationError(Exception):
 
 def calculate_entropy(text: str) -> float:
     """
-        Calculate Shannon entropy to detect low-randomness secrets.
+    Calculate Shannon entropy to detect low-randomness secrets.
 
-        Args:
-            text (str): The secret string to evaluate.
+    Args:
+        text (str): The secret string to evaluate.
 
-        Returns:
-            float: The calculated entropy score.
-        """
+    Returns:
+        float: The calculated entropy score.
+    """
     if not text:
         return 0.0
     probabilities = [text.count(c) / len(text) for c in set(text)]
@@ -387,6 +387,35 @@ class Settings(BaseSettings):
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
             raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
+
+    @field_validator("app_root_path")
+    @classmethod
+    def validate_app_root_path(cls, v: str) -> str:
+        """Validate app_root_path is a path-only value (no scheme or host).
+
+        rbac.py constructs Location redirect headers as
+        ``f"{settings.app_root_path}/v1/admin/login"``.  If a reverse proxy
+        sets ``X-Forwarded-Prefix`` to an attacker-controlled value containing
+        a URL scheme or host, an open redirect (CWE-601) becomes possible.
+        This validator rejects any value that is not path-only at startup so
+        the misconfiguration is caught immediately rather than exploited at
+        runtime.
+
+        Args:
+            v: Raw configured value.
+
+        Returns:
+            The stripped path prefix (may be empty string).
+
+        Raises:
+            ValueError: When the value contains a URL scheme or host component.
+        """
+        if not v:
+            return ""
+        cleaned = str(v).strip()
+        if "://" in cleaned or cleaned.startswith("//"):
+            raise ValueError(f"APP_ROOT_PATH '{v}' must be a path-only value (no scheme or host). " "Example: '/mygateway' not 'https://example.com/mygateway'.")
+        return cleaned.rstrip("/")
 
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
@@ -1369,7 +1398,7 @@ class Settings(BaseSettings):
         critical_secrets = {
             "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
             "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value(),
-            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value()
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value(),
         }
 
         for name, value in critical_secrets.items():
